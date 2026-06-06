@@ -2,10 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover"
+  />
   <title>Mobile Image Flip Gallery</title>
 
-  <!-- Load only the first image immediately. The script preloads nearby slides after startup. -->
+  <!-- Load only the first image immediately. Nearby slides are warmed after startup. -->
   <link rel="preload" as="image" href="1.png" fetchpriority="high" />
 
   <style>
@@ -39,12 +42,10 @@
       perspective: 1000px;
 
       /*
-        Important for mobile:
-        - pan-y keeps vertical browser behaviour available if needed.
-        - horizontal movement remains available for our swipe gesture.
-        If your page is full-screen only, you can change this to touch-action: none.
+        We handle gestures ourselves so the gallery works consistently in
+        mobile browsers, WebViews, and homescreen/PWA-style launches.
       */
-      touch-action: pan-y;
+      touch-action: none;
     }
 
     .slide {
@@ -74,19 +75,19 @@
     }
 
     .slide.out-next {
-      animation: outNext 360ms cubic-bezier(.22,.9,.28,1) both;
+      animation: outNext 340ms cubic-bezier(.22,.9,.28,1) both;
     }
 
     .slide.in-next {
-      animation: inNext 360ms cubic-bezier(.22,.9,.28,1) both;
+      animation: inNext 340ms cubic-bezier(.22,.9,.28,1) both;
     }
 
     .slide.out-prev {
-      animation: outPrev 360ms cubic-bezier(.22,.9,.28,1) both;
+      animation: outPrev 340ms cubic-bezier(.22,.9,.28,1) both;
     }
 
     .slide.in-prev {
-      animation: inPrev 360ms cubic-bezier(.22,.9,.28,1) both;
+      animation: inPrev 340ms cubic-bezier(.22,.9,.28,1) both;
     }
 
     @keyframes outNext {
@@ -133,6 +134,27 @@
       }
     }
 
+    .zoom-hint {
+      position: fixed;
+      left: 50%;
+      bottom: calc(14px + env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      z-index: 10;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, .58);
+      color: #fff;
+      font: 500 13px/1.2 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      pointer-events: none;
+      opacity: .86;
+      transition: opacity 300ms ease;
+      white-space: nowrap;
+    }
+
+    .zoom-hint.hidden {
+      opacity: 0;
+    }
+
     @media (prefers-reduced-motion: reduce) {
       .slide.out-next,
       .slide.in-next,
@@ -145,7 +167,7 @@
 </head>
 
 <body>
-  <main class="viewer" id="viewer" aria-label="Tap or swipe to flip through images">
+  <main class="viewer" id="viewer" aria-label="Tap, swipe, or pinch to zoom images">
     <img
       class="slide current"
       id="currentSlide"
@@ -155,11 +177,13 @@
       decoding="async"
       fetchpriority="high"
     />
+    <div class="zoom-hint" id="zoomHint">Swipe to change • Pinch to zoom • Double-tap to reset</div>
   </main>
 
   <script>
     const totalImages = 17;
     const viewer = document.getElementById("viewer");
+    const zoomHint = document.getElementById("zoomHint");
 
     let currentIndex = 1;
     let currentSlide = document.getElementById("currentSlide");
@@ -168,12 +192,32 @@
     let gestureStarted = false;
     let startX = 0;
     let startY = 0;
-    let lastGestureTime = 0;
+    let lastTapTime = 0;
+    let suppressMouseUntil = 0;
+
+    // Built-in image zoom state. This works even when browser page-zoom is blocked.
+    const MIN_SCALE = 1;
+    const MAX_SCALE = 4;
+    let scale = 1;
+    let translateX = 0;
+    let translateY = 0;
+    let panStartX = 0;
+    let panStartY = 0;
+    let panBaseX = 0;
+    let panBaseY = 0;
+    let isPanning = false;
+
+    let isPinching = false;
+    let pinchStartDistance = 0;
+    let pinchStartScale = 1;
+    let pinchCenterX = 0;
+    let pinchCenterY = 0;
+    let pinchStartTranslateX = 0;
+    let pinchStartTranslateY = 0;
 
     /*
       Mobile performance:
-      The old version preloaded all images immediately.
-      This version keeps only the current image and nearby images warm.
+      Keep only the current image and nearby images warm.
       Increase PRELOAD_RADIUS to 2 if users move very quickly through slides.
     */
     const PRELOAD_RADIUS = 1;
@@ -210,30 +254,30 @@
     }
 
     function preloadAround(index) {
-      // Give the visible image priority, then nearby images.
       preloadImage(index);
 
       window.requestIdleCallback?.(() => {
-        for (let offset = 1; offset <= PRELOAD_RADIUS; offset++) {
-          preloadImage(index + offset);
-          preloadImage(index - offset);
-        }
-
-        // Keep cache small on memory-limited phones.
-        for (const cachedIndex of imageCache.keys()) {
-          let distance = Math.abs(cachedIndex - index);
-          distance = Math.min(distance, totalImages - distance);
-
-          if (distance > PRELOAD_RADIUS + 1) {
-            imageCache.delete(cachedIndex);
-          }
-        }
+        warmNearbyImages(index);
       }) || setTimeout(() => {
-        for (let offset = 1; offset <= PRELOAD_RADIUS; offset++) {
-          preloadImage(index + offset);
-          preloadImage(index - offset);
-        }
+        warmNearbyImages(index);
       }, 80);
+    }
+
+    function warmNearbyImages(index) {
+      for (let offset = 1; offset <= PRELOAD_RADIUS; offset++) {
+        preloadImage(index + offset);
+        preloadImage(index - offset);
+      }
+
+      // Keep cache small on memory-limited phones.
+      for (const cachedIndex of imageCache.keys()) {
+        let distance = Math.abs(cachedIndex - index);
+        distance = Math.min(distance, totalImages - distance);
+
+        if (distance > PRELOAD_RADIUS + 1) {
+          imageCache.delete(cachedIndex);
+        }
+      }
     }
 
     async function waitForImage(index) {
@@ -256,12 +300,84 @@
       });
     }
 
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function getDistance(touchA, touchB) {
+      const dx = touchA.clientX - touchB.clientX;
+      const dy = touchA.clientY - touchB.clientY;
+      return Math.hypot(dx, dy);
+    }
+
+    function getCenter(touchA, touchB) {
+      return {
+        x: (touchA.clientX + touchB.clientX) / 2,
+        y: (touchA.clientY + touchB.clientY) / 2
+      };
+    }
+
+    function getMaxPanX() {
+      return ((scale - 1) * viewer.clientWidth) / 2;
+    }
+
+    function getMaxPanY() {
+      return ((scale - 1) * viewer.clientHeight) / 2;
+    }
+
+    function clampPan() {
+      if (scale <= 1) {
+        translateX = 0;
+        translateY = 0;
+        return;
+      }
+
+      translateX = clamp(translateX, -getMaxPanX(), getMaxPanX());
+      translateY = clamp(translateY, -getMaxPanY(), getMaxPanY());
+    }
+
+    function applyZoomTransform() {
+      clampPan();
+      currentSlide.style.transform = `translate3d(${translateX}px, ${translateY}px, 0) scale(${scale})`;
+      currentSlide.style.cursor = scale > 1 ? "grab" : "default";
+    }
+
+    function resetZoom() {
+      scale = 1;
+      translateX = 0;
+      translateY = 0;
+      if (currentSlide) {
+        currentSlide.style.transform = "";
+        currentSlide.style.cursor = "default";
+      }
+    }
+
+    function zoomAt(clientX, clientY, nextScale) {
+      const previousScale = scale;
+      nextScale = clamp(nextScale, MIN_SCALE, MAX_SCALE);
+
+      const rect = viewer.getBoundingClientRect();
+      const offsetX = clientX - rect.left - rect.width / 2;
+      const offsetY = clientY - rect.top - rect.height / 2;
+      const ratio = nextScale / previousScale;
+
+      translateX = offsetX - (offsetX - translateX) * ratio;
+      translateY = offsetY - (offsetY - translateY) * ratio;
+      scale = nextScale;
+
+      if (scale <= 1.01) {
+        resetZoom();
+      } else {
+        applyZoomTransform();
+      }
+    }
+
     async function flip(direction = "next") {
       if (isAnimating) return;
       isAnimating = true;
+      resetZoom();
 
       const targetIndex = getTargetIndex(direction);
-
       await waitForImage(targetIndex);
 
       const incoming = document.createElement("img");
@@ -271,7 +387,7 @@
       incoming.draggable = false;
       incoming.decoding = "async";
 
-      viewer.appendChild(incoming);
+      viewer.insertBefore(incoming, zoomHint);
 
       const outClass = direction === "prev" ? "out-prev" : "out-next";
       const inClass = direction === "prev" ? "in-prev" : "in-next";
@@ -288,6 +404,7 @@
 
           incoming.className = "slide current";
           incoming.id = "currentSlide";
+          incoming.style.transform = "";
 
           currentSlide = incoming;
           currentIndex = targetIndex;
@@ -298,21 +415,17 @@
       );
     }
 
-    function startGesture(x, y) {
+    function startNavigationGesture(x, y) {
+      if (scale > 1 || isPinching) return;
       gestureStarted = true;
       startX = x;
       startY = y;
     }
 
-    function finishGesture(x, y) {
-      if (!gestureStarted) return;
+    function finishNavigationGesture(x, y) {
+      if (!gestureStarted || scale > 1 || isPinching) return;
 
       gestureStarted = false;
-
-      // Prevent duplicate firing when both pointer and touch events are emitted.
-      const now = Date.now();
-      if (now - lastGestureTime < 250) return;
-      lastGestureTime = now;
 
       const diffX = x - startX;
       const diffY = y - startY;
@@ -330,59 +443,169 @@
       }
     }
 
-    // Pointer events: modern browsers.
+    function hideHintSoon() {
+      setTimeout(() => zoomHint.classList.add("hidden"), 3500);
+    }
+
+    // Touch gestures: pinch to zoom, drag when zoomed, tap/swipe when not zoomed.
+    viewer.addEventListener(
+      "touchstart",
+      (event) => {
+        suppressMouseUntil = Date.now() + 700;
+
+        if (event.touches.length === 2) {
+          event.preventDefault();
+          gestureStarted = false;
+          isPanning = false;
+          isPinching = true;
+
+          const [touchA, touchB] = event.touches;
+          pinchStartDistance = getDistance(touchA, touchB);
+          pinchStartScale = scale;
+          const center = getCenter(touchA, touchB);
+          pinchCenterX = center.x;
+          pinchCenterY = center.y;
+          pinchStartTranslateX = translateX;
+          pinchStartTranslateY = translateY;
+          return;
+        }
+
+        if (event.touches.length === 1) {
+          const touch = event.touches[0];
+
+          if (scale > 1) {
+            event.preventDefault();
+            isPanning = true;
+            panStartX = touch.clientX;
+            panStartY = touch.clientY;
+            panBaseX = translateX;
+            panBaseY = translateY;
+          } else {
+            startNavigationGesture(touch.clientX, touch.clientY);
+          }
+        }
+      },
+      { passive: false }
+    );
+
+    viewer.addEventListener(
+      "touchmove",
+      (event) => {
+        if (event.touches.length === 2 && isPinching) {
+          event.preventDefault();
+
+          const [touchA, touchB] = event.touches;
+          const distance = getDistance(touchA, touchB);
+          const center = getCenter(touchA, touchB);
+          const nextScale = clamp((distance / pinchStartDistance) * pinchStartScale, MIN_SCALE, MAX_SCALE);
+          const ratio = nextScale / pinchStartScale;
+
+          translateX = center.x - pinchCenterX + pinchStartTranslateX * ratio;
+          translateY = center.y - pinchCenterY + pinchStartTranslateY * ratio;
+          scale = nextScale;
+          applyZoomTransform();
+          return;
+        }
+
+        if (event.touches.length === 1 && scale > 1 && isPanning) {
+          event.preventDefault();
+          const touch = event.touches[0];
+          translateX = panBaseX + touch.clientX - panStartX;
+          translateY = panBaseY + touch.clientY - panStartY;
+          applyZoomTransform();
+        }
+      },
+      { passive: false }
+    );
+
+    viewer.addEventListener(
+      "touchend",
+      (event) => {
+        if (isPinching && event.touches.length < 2) {
+          event.preventDefault();
+          isPinching = false;
+          isPanning = false;
+          gestureStarted = false;
+
+          if (scale <= 1.03) {
+            resetZoom();
+          } else {
+            applyZoomTransform();
+          }
+          return;
+        }
+
+        if (isPanning) {
+          event.preventDefault();
+          isPanning = false;
+          return;
+        }
+
+        if (!event.changedTouches.length) return;
+        const touch = event.changedTouches[0];
+
+        const now = Date.now();
+        const isDoubleTap = now - lastTapTime < 300;
+        lastTapTime = now;
+
+        if (isDoubleTap) {
+          event.preventDefault();
+          resetZoom();
+          gestureStarted = false;
+          return;
+        }
+
+        finishNavigationGesture(touch.clientX, touch.clientY);
+      },
+      { passive: false }
+    );
+
+    viewer.addEventListener("touchcancel", () => {
+      gestureStarted = false;
+      isPanning = false;
+      isPinching = false;
+    });
+
+    // Pointer/mouse fallback for desktop and browsers without touch events.
     viewer.addEventListener("pointerdown", (event) => {
+      if (Date.now() < suppressMouseUntil) return;
       if (event.pointerType === "mouse" && event.button !== 0) return;
-
-      startGesture(event.clientX, event.clientY);
-
-      if (viewer.setPointerCapture && event.pointerId !== undefined) {
-        viewer.setPointerCapture(event.pointerId);
-      }
+      startNavigationGesture(event.clientX, event.clientY);
     });
 
     viewer.addEventListener("pointerup", (event) => {
-      finishGesture(event.clientX, event.clientY);
-
-      if (viewer.releasePointerCapture && event.pointerId !== undefined) {
-        try {
-          viewer.releasePointerCapture(event.pointerId);
-        } catch (error) {}
-      }
+      if (Date.now() < suppressMouseUntil) return;
+      finishNavigationGesture(event.clientX, event.clientY);
     });
 
     viewer.addEventListener("pointercancel", () => {
       gestureStarted = false;
     });
 
-    // Touch fallback: older iOS/Android WebViews and embedded browsers.
+    // Desktop convenience: Ctrl/Cmd + wheel zooms into the image.
     viewer.addEventListener(
-      "touchstart",
+      "wheel",
       (event) => {
-        if (event.touches.length !== 1) return;
-        const touch = event.touches[0];
-        startGesture(touch.clientX, touch.clientY);
+        if (!event.ctrlKey && !event.metaKey) return;
+        event.preventDefault();
+        const direction = event.deltaY < 0 ? 1 : -1;
+        zoomAt(event.clientX, event.clientY, scale + direction * 0.22);
       },
-      { passive: true }
-    );
-
-    viewer.addEventListener(
-      "touchend",
-      (event) => {
-        if (!event.changedTouches.length) return;
-        const touch = event.changedTouches[0];
-        finishGesture(touch.clientX, touch.clientY);
-      },
-      { passive: true }
+      { passive: false }
     );
 
     document.addEventListener("keydown", (event) => {
       if (event.key === "ArrowRight" || event.key === " ") flip("next");
       if (event.key === "ArrowLeft") flip("prev");
+      if (event.key === "Escape") resetZoom();
     });
 
-    // Start warming only nearby images after the first screen is usable.
+    window.addEventListener("resize", () => {
+      if (scale > 1) applyZoomTransform();
+    });
+
     preloadAround(currentIndex);
+    hideHintSoon();
   </script>
 </body>
 </html>
