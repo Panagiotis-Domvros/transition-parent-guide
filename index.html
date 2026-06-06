@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover" />
-  <title>Mobile Image Gallery</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover" />
+  <title>Ultra Fast Mobile Image Gallery</title>
 
   <style>
     * {
@@ -14,319 +14,260 @@
     html,
     body {
       margin: 0;
-      padding: 0;
       width: 100%;
       min-height: 100%;
       background: #000;
-      -webkit-text-size-adjust: 100%;
+      color: #fff;
     }
 
     body {
-      overflow: auto;
-      user-select: none;
-      -webkit-user-select: none;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      touch-action: pan-x pan-y pinch-zoom;
       overscroll-behavior: contain;
     }
 
     .viewer {
-      position: relative;
-      width: 100vw;
-      height: 100vh;
-      height: 100svh;
-      height: 100dvh;
-      max-width: 100vw;
-      max-height: 100dvh;
-      overflow: hidden;
-      background: #000;
+      position: fixed;
+      inset: 0;
       display: flex;
       align-items: center;
       justify-content: center;
-    }
-
-    .slide {
-      position: absolute;
-      inset: 0;
-      display: block;
-      width: 100%;
-      height: 100%;
-      max-width: 100%;
-      max-height: 100%;
-      min-width: 0;
-      min-height: 0;
-      object-fit: contain;
-      object-position: center center;
+      width: 100vw;
+      height: 100dvh;
       background: #000;
-      -webkit-user-drag: none;
+      overflow: hidden;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right)
+               env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
+
+    #slide {
+      display: block;
+      max-width: 100vw;
+      max-height: 100dvh;
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      object-position: center;
       user-select: none;
-      -webkit-user-select: none;
-      opacity: 1;
-      transition: opacity 110ms ease;
+      -webkit-user-drag: none;
+      image-rendering: auto;
     }
 
-    .slide.loading {
-      opacity: .38;
-    }
-
-    .loader,
-    .counter,
-    .open-image {
+    .nav {
       position: fixed;
-      z-index: 20;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 5;
       border: 0;
       border-radius: 999px;
-      background: rgba(0, 0, 0, .72);
+      width: 44px;
+      height: 44px;
+      background: rgba(0, 0, 0, .45);
       color: #fff;
-      font: 600 13px/1.2 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      pointer-events: none;
-      white-space: nowrap;
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
+      font-size: 28px;
+      line-height: 44px;
+      text-align: center;
+      cursor: pointer;
     }
 
-    .loader {
-      left: 50%;
-      bottom: calc(16px + env(safe-area-inset-bottom));
-      transform: translateX(-50%);
-      padding: 8px 12px;
-      opacity: 0;
-      transition: opacity 110ms ease;
+    .nav:active {
+      transform: translateY(-50%) scale(.96);
     }
 
-    .loader.visible {
-      opacity: .95;
-    }
+    .prev { left: 10px; }
+    .next { right: 10px; }
 
     .counter {
-      left: calc(12px + env(safe-area-inset-left));
-      bottom: calc(12px + env(safe-area-inset-bottom));
-      padding: 7px 10px;
-      opacity: .75;
+      position: fixed;
+      left: 50%;
+      bottom: calc(10px + env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      z-index: 6;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, .55);
+      font-size: 13px;
     }
 
-    .open-image {
-      right: calc(12px + env(safe-area-inset-right));
-      bottom: calc(12px + env(safe-area-inset-bottom));
+    .open-link {
+      position: fixed;
+      right: 10px;
+      bottom: calc(10px + env(safe-area-inset-bottom));
+      z-index: 6;
       padding: 7px 10px;
-      pointer-events: auto;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, .55);
+      color: #fff;
       text-decoration: none;
-      opacity: .75;
+      font-size: 13px;
     }
 
-    .open-image:active {
-      opacity: 1;
+    .loading {
+      position: fixed;
+      left: 10px;
+      bottom: calc(10px + env(safe-area-inset-bottom));
+      z-index: 6;
+      display: none;
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, .55);
+      font-size: 13px;
     }
 
-    @media (prefers-reduced-motion: reduce) {
-      .slide,
-      .loader {
-        transition-duration: 1ms;
+    body.is-loading .loading {
+      display: block;
+    }
+
+    @media (max-width: 600px) {
+      .nav {
+        width: 38px;
+        height: 38px;
+        line-height: 38px;
+        font-size: 24px;
+      }
+
+      .counter,
+      .open-link,
+      .loading {
+        font-size: 12px;
       }
     }
   </style>
 </head>
 
 <body>
-  <main class="viewer" id="viewer" aria-label="Tap or swipe to change image. Pinch to zoom. Use Open image for full native image zoom.">
-    <img
-      class="slide"
-      id="currentSlide"
-      src="1.png"
-      alt="Image 1"
-      draggable="false"
-      decoding="async"
-      fetchpriority="high"
-    />
-    <div class="loader" id="loader">Loading image…</div>
-    <div class="counter" id="counter">1 / 17</div>
-    <a class="open-image" id="openImage" href="1.png" target="_blank" rel="noopener">Open image</a>
+  <main class="viewer" id="viewer" aria-label="Image gallery. Swipe, tap arrows, or pinch to zoom.">
+    <img id="slide" src="1.png" alt="Image 1" draggable="false" decoding="async" fetchpriority="high" />
   </main>
 
+  <button class="nav prev" id="prevBtn" type="button" aria-label="Previous image">‹</button>
+  <button class="nav next" id="nextBtn" type="button" aria-label="Next image">›</button>
+  <div class="counter" id="counter">1 / 17</div>
+  <div class="loading" id="loading">Loading…</div>
+  <a class="open-link" id="openLink" href="1.png" target="_blank" rel="noopener">Open image</a>
+
   <script>
+    /*
+      ULTRA-LIGHT VERSION
+      - No startup preloading
+      - No flip animation
+      - No custom pinch-zoom JavaScript
+      - Uses native phone pinch-zoom
+      - Loads only the image the user requests
+
+      For major speed gains, replace 1.png, 2.png, etc. with compressed WebP/JPG files.
+    */
+
     const totalImages = 17;
     const viewer = document.getElementById("viewer");
-    const currentSlide = document.getElementById("currentSlide");
-    const loader = document.getElementById("loader");
+    const slide = document.getElementById("slide");
     const counter = document.getElementById("counter");
-    const openImage = document.getElementById("openImage");
+    const openLink = document.getElementById("openLink");
+    const prevBtn = document.getElementById("prevBtn");
+    const nextBtn = document.getElementById("nextBtn");
 
     let currentIndex = 1;
-    let isChanging = false;
-    let startX = 0;
-    let startY = 0;
-    let gestureStarted = false;
-    let multiTouchHappened = false;
-    let preloadTimer = null;
-
-    const cache = new Map();
+    let loading = false;
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let touchStartTime = 0;
+    let multiTouch = false;
 
     function imagePath(index) {
       return `${index}.png`;
     }
 
-    function wrapIndex(index) {
+    function normalizeIndex(index) {
       if (index < 1) return totalImages;
       if (index > totalImages) return 1;
       return index;
     }
 
-    function targetIndex(direction) {
-      return direction === "prev" ? wrapIndex(currentIndex - 1) : wrapIndex(currentIndex + 1);
+    function updateUi(index) {
+      counter.textContent = `${index} / ${totalImages}`;
+      openLink.href = imagePath(index);
+      slide.alt = `Image ${index}`;
     }
 
-    function pageIsZoomed() {
-      return window.visualViewport && window.visualViewport.scale > 1.05;
+    function show(index) {
+      if (loading) return;
+
+      const nextIndex = normalizeIndex(index);
+      if (nextIndex === currentIndex) return;
+
+      loading = true;
+      document.body.classList.add("is-loading");
+
+      const src = imagePath(nextIndex);
+      const testImage = new Image();
+      testImage.decoding = "async";
+
+      testImage.onload = () => {
+        slide.src = src;
+        currentIndex = nextIndex;
+        updateUi(currentIndex);
+        loading = false;
+        document.body.classList.remove("is-loading");
+      };
+
+      testImage.onerror = () => {
+        loading = false;
+        document.body.classList.remove("is-loading");
+        alert(`Could not load ${src}`);
+      };
+
+      testImage.src = src;
     }
 
-    function showLoader() {
-      loader.classList.add("visible");
-      currentSlide.classList.add("loading");
+    function next() {
+      show(currentIndex + 1);
     }
 
-    function hideLoader() {
-      loader.classList.remove("visible");
-      currentSlide.classList.remove("loading");
+    function previous() {
+      show(currentIndex - 1);
     }
 
-    function preload(index) {
-      index = wrapIndex(index);
-      if (cache.has(index)) return cache.get(index);
+    prevBtn.addEventListener("click", previous);
+    nextBtn.addEventListener("click", next);
 
-      const img = new Image();
-      img.decoding = "async";
-      img.src = imagePath(index);
-      cache.set(index, img);
-      return img;
-    }
-
-    function waitFor(img) {
-      if (img.complete && img.naturalWidth > 0) return Promise.resolve();
-
-      return new Promise((resolve) => {
-        img.onload = resolve;
-        img.onerror = resolve;
-      });
-    }
-
-    function updateUi() {
-      counter.textContent = `${currentIndex} / ${totalImages}`;
-      openImage.href = imagePath(currentIndex);
-      currentSlide.alt = `Image ${currentIndex}`;
-    }
-
-    function preloadNextAfterFirstPaint() {
-      clearTimeout(preloadTimer);
-      preloadTimer = setTimeout(() => {
-        preload(wrapIndex(currentIndex + 1));
-
-        // Keep memory low on older phones: only keep current/next cached.
-        for (const index of cache.keys()) {
-          if (index !== currentIndex && index !== wrapIndex(currentIndex + 1)) {
-            cache.delete(index);
-          }
-        }
-      }, 900);
-    }
-
-    async function changeSlide(direction = "next") {
-      if (isChanging || pageIsZoomed()) return;
-      isChanging = true;
-
-      const next = targetIndex(direction);
-      const nextImg = preload(next);
-
-      if (!(nextImg.complete && nextImg.naturalWidth > 0)) showLoader();
-      await waitFor(nextImg);
-      hideLoader();
-
-      currentIndex = next;
-      currentSlide.src = imagePath(currentIndex);
-      updateUi();
-
-      isChanging = false;
-      preloadNextAfterFirstPaint();
-    }
-
-    function finishGesture(endX, endY) {
-      if (!gestureStarted || multiTouchHappened || pageIsZoomed()) {
-        gestureStarted = false;
-        multiTouchHappened = false;
-        return;
-      }
-
-      const diffX = endX - startX;
-      const diffY = endY - startY;
-      const horizontalSwipe = Math.abs(diffX) > 42 && Math.abs(diffX) > Math.abs(diffY) * 1.25;
-      const tap = Math.abs(diffX) < 13 && Math.abs(diffY) < 13;
-
-      gestureStarted = false;
-
-      if (horizontalSwipe) {
-        changeSlide(diffX < 0 ? "next" : "prev");
-      } else if (tap) {
-        changeSlide("next");
-      }
-    }
-
-    // Passive touch listeners keep pinch zoom native and fast.
+    // Single-finger swipe only. Multi-touch is ignored so native pinch-zoom can work.
     viewer.addEventListener("touchstart", (event) => {
-      if (event.touches.length > 1) {
-        multiTouchHappened = true;
-        gestureStarted = false;
-        return;
-      }
+      multiTouch = event.touches.length > 1;
+      if (multiTouch) return;
 
-      const t = event.touches[0];
-      startX = t.clientX;
-      startY = t.clientY;
-      gestureStarted = true;
-      multiTouchHappened = false;
-    }, { passive: true });
-
-    viewer.addEventListener("touchmove", (event) => {
-      if (event.touches.length > 1) {
-        multiTouchHappened = true;
-        gestureStarted = false;
-      }
+      const touch = event.changedTouches[0];
+      touchStartX = touch.clientX;
+      touchStartY = touch.clientY;
+      touchStartTime = Date.now();
     }, { passive: true });
 
     viewer.addEventListener("touchend", (event) => {
-      if (!event.changedTouches.length) return;
-      const t = event.changedTouches[0];
-      finishGesture(t.clientX, t.clientY);
+      if (multiTouch) {
+        multiTouch = false;
+        return;
+      }
+
+      const touch = event.changedTouches[0];
+      const diffX = touch.clientX - touchStartX;
+      const diffY = touch.clientY - touchStartY;
+      const elapsed = Date.now() - touchStartTime;
+
+      const horizontalSwipe = Math.abs(diffX) > 50 && Math.abs(diffX) > Math.abs(diffY) * 1.25;
+      const quickTap = Math.abs(diffX) < 12 && Math.abs(diffY) < 12 && elapsed < 350;
+
+      if (horizontalSwipe) {
+        diffX < 0 ? next() : previous();
+      } else if (quickTap) {
+        next();
+      }
     }, { passive: true });
-
-    viewer.addEventListener("touchcancel", () => {
-      gestureStarted = false;
-      multiTouchHappened = false;
-    }, { passive: true });
-
-    viewer.addEventListener("pointerdown", (event) => {
-      if (event.pointerType === "touch") return;
-      if (event.pointerType === "mouse" && event.button !== 0) return;
-      startX = event.clientX;
-      startY = event.clientY;
-      gestureStarted = true;
-      multiTouchHappened = false;
-    });
-
-    viewer.addEventListener("pointerup", (event) => {
-      if (event.pointerType === "touch") return;
-      finishGesture(event.clientX, event.clientY);
-    });
 
     document.addEventListener("keydown", (event) => {
-      if (event.key === "ArrowRight" || event.key === " ") changeSlide("next");
-      if (event.key === "ArrowLeft") changeSlide("prev");
+      if (event.key === "ArrowRight" || event.key === " ") next();
+      if (event.key === "ArrowLeft") previous();
     });
 
-    updateUi();
-
-    // Wait until image 1 is actually rendered before doing any background loading.
-    if (currentSlide.complete && currentSlide.naturalWidth > 0) {
-      preloadNextAfterFirstPaint();
-    } else {
-      currentSlide.addEventListener("load", preloadNextAfterFirstPaint, { once: true });
-    }
+    slide.addEventListener("load", () => updateUi(currentIndex), { once: true });
   </script>
 </body>
 </html>
