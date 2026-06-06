@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover" />
-  <title>Clean Ultra Fast Mobile Image Gallery</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Mobile JPG Gallery</title>
 
   <style>
     * {
@@ -15,227 +15,350 @@
     body {
       margin: 0;
       width: 100%;
-      min-height: 100%;
+      height: 100%;
+      overflow: hidden;
       background: #000;
-      color: #fff;
+      user-select: none;
+      -webkit-user-select: none;
+      overscroll-behavior: none;
     }
 
     body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      touch-action: pan-x pan-y pinch-zoom;
-      overscroll-behavior: contain;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right)
+               env(safe-area-inset-bottom) env(safe-area-inset-left);
     }
 
     .viewer {
       position: fixed;
       inset: 0;
+      width: 100vw;
+      height: 100dvh;
+      overflow: hidden;
+      background: #000;
       display: flex;
       align-items: center;
       justify-content: center;
-      width: 100vw;
-      height: 100dvh;
-      background: #000;
-      overflow: hidden;
-      padding: env(safe-area-inset-top) env(safe-area-inset-right)
-               env(safe-area-inset-bottom) env(safe-area-inset-left);
+      touch-action: none;
     }
 
-    #slide {
-      display: block;
-      max-width: 100vw;
-      max-height: 100dvh;
-      width: auto;
-      height: auto;
+    .slide {
+      width: 100%;
+      height: 100%;
       object-fit: contain;
       object-position: center;
-      user-select: none;
+      display: block;
+      background: #000;
       -webkit-user-drag: none;
-      image-rendering: auto;
+      user-select: none;
+      transform-origin: center center;
+      will-change: transform;
     }
 
-    .nav {
+    .nav-button {
       position: fixed;
       top: 50%;
       transform: translateY(-50%);
-      z-index: 5;
+      width: 48px;
+      height: 72px;
       border: 0;
       border-radius: 999px;
-      width: 44px;
-      height: 44px;
-      background: rgba(0, 0, 0, .45);
+      background: rgba(0, 0, 0, 0.32);
       color: #fff;
-      font-size: 28px;
-      line-height: 44px;
-      text-align: center;
+      font-size: 34px;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
       cursor: pointer;
+      backdrop-filter: blur(4px);
     }
 
-    .nav:active {
-      transform: translateY(-50%) scale(.96);
+    .nav-button:active {
+      background: rgba(255, 255, 255, 0.22);
     }
 
-    .prev { left: 10px; }
-    .next { right: 10px; }
+    .nav-button.prev {
+      left: max(10px, env(safe-area-inset-left));
+    }
 
+    .nav-button.next {
+      right: max(10px, env(safe-area-inset-right));
+    }
 
-    .loading {
+    .message {
       position: fixed;
-      left: 10px;
-      bottom: calc(10px + env(safe-area-inset-bottom));
-      z-index: 6;
-      display: none;
-      padding: 7px 10px;
+      left: 50%;
+      bottom: max(18px, env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      z-index: 20;
+      padding: 8px 12px;
+      max-width: calc(100vw - 32px);
       border-radius: 999px;
-      background: rgba(0, 0, 0, .55);
+      background: rgba(0, 0, 0, 0.62);
+      color: #fff;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       font-size: 13px;
+      line-height: 1.2;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 160ms ease;
+      white-space: nowrap;
     }
 
-    body.is-loading .loading {
-      display: block;
-    }
-
-    @media (max-width: 600px) {
-      .nav {
-        width: 38px;
-        height: 38px;
-        line-height: 38px;
-        font-size: 24px;
-      }
-
-      .loading {
-        font-size: 12px;
-      }
+    .message.visible {
+      opacity: 1;
     }
   </style>
 </head>
 
 <body>
-  <main class="viewer" id="viewer" aria-label="Image gallery. Swipe, tap arrows, or pinch to zoom.">
-    <img id="slide" src="1.png" alt="Image 1" draggable="false" decoding="async" fetchpriority="high" />
+  <main class="viewer" id="viewer" aria-label="Swipe, tap, or pinch to view images">
+    <img class="slide" id="slide" src="1.jpg" alt="Image 1" draggable="false" />
   </main>
 
-  <button class="nav prev" id="prevBtn" type="button" aria-label="Previous image">‹</button>
-  <button class="nav next" id="nextBtn" type="button" aria-label="Next image">›</button>
-  <div class="loading" id="loading">Loading…</div>
+  <button class="nav-button prev" id="prevButton" type="button" aria-label="Previous image">‹</button>
+  <button class="nav-button next" id="nextButton" type="button" aria-label="Next image">›</button>
+  <div class="message" id="message" aria-live="polite"></div>
 
   <script>
-    /*
-      ULTRA-LIGHT VERSION
-      - No startup preloading
-      - No flip animation
-      - No custom pinch-zoom JavaScript
-      - Uses native phone pinch-zoom
-      - Loads only the image the user requests
-
-      For major speed gains, replace 1.png, 2.png, etc. with compressed WebP/JPG files.
-    */
-
     const totalImages = 17;
+    const imageFiles = Array.from({ length: totalImages }, (_, i) => `${i + 1}.jpg`);
+
     const viewer = document.getElementById("viewer");
     const slide = document.getElementById("slide");
-    const prevBtn = document.getElementById("prevBtn");
-    const nextBtn = document.getElementById("nextBtn");
+    const prevButton = document.getElementById("prevButton");
+    const nextButton = document.getElementById("nextButton");
+    const message = document.getElementById("message");
 
-    let currentIndex = 1;
-    let loading = false;
-    let touchStartX = 0;
-    let touchStartY = 0;
-    let touchStartTime = 0;
-    let multiTouch = false;
+    let currentIndex = 0;
 
-    function imagePath(index) {
-      return `${index}.png`;
+    let scale = 1;
+    let translateX = 0;
+    let translateY = 0;
+
+    let startX = 0;
+    let startY = 0;
+    let lastX = 0;
+    let lastY = 0;
+    let moved = false;
+
+    let isPinching = false;
+    let pinchStartDistance = 0;
+    let pinchStartScale = 1;
+    let pinchStartMidX = 0;
+    let pinchStartMidY = 0;
+    let pinchStartTranslateX = 0;
+    let pinchStartTranslateY = 0;
+
+    let suppressClickUntil = 0;
+    let messageTimer = null;
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
     }
 
-    function normalizeIndex(index) {
-      if (index < 1) return totalImages;
-      if (index > totalImages) return 1;
-      return index;
+    function showMessage(text) {
+      message.textContent = text;
+      message.classList.add("visible");
+      clearTimeout(messageTimer);
+      messageTimer = setTimeout(() => {
+        message.classList.remove("visible");
+      }, 1200);
     }
 
-    function updateUi(index) {
-      slide.alt = `Image ${index}`;
+    function applyTransform() {
+      slide.style.transform = `translate3d(${translateX}px, ${translateY}px, 0) scale(${scale})`;
     }
 
-    function show(index) {
-      if (loading) return;
+    function resetZoom() {
+      scale = 1;
+      translateX = 0;
+      translateY = 0;
+      applyTransform();
+    }
 
-      const nextIndex = normalizeIndex(index);
+    function goTo(index) {
+      const nextIndex = clamp(index, 0, totalImages - 1);
       if (nextIndex === currentIndex) return;
 
-      loading = true;
-      document.body.classList.add("is-loading");
+      currentIndex = nextIndex;
+      resetZoom();
+      slide.alt = `Image ${currentIndex + 1}`;
+      slide.src = imageFiles[currentIndex];
+    }
 
-      const src = imagePath(nextIndex);
-      const testImage = new Image();
-      testImage.decoding = "async";
+    function nextImage() {
+      if (currentIndex < totalImages - 1) {
+        goTo(currentIndex + 1);
+      } else {
+        showMessage("Last image");
+      }
+    }
 
-      testImage.onload = () => {
-        slide.src = src;
-        currentIndex = nextIndex;
-        updateUi(currentIndex);
-        loading = false;
-        document.body.classList.remove("is-loading");
+    function previousImage() {
+      if (currentIndex > 0) {
+        goTo(currentIndex - 1);
+      } else {
+        showMessage("First image");
+      }
+    }
+
+    function distance(touchA, touchB) {
+      const dx = touchA.clientX - touchB.clientX;
+      const dy = touchA.clientY - touchB.clientY;
+      return Math.hypot(dx, dy);
+    }
+
+    function midpoint(touchA, touchB) {
+      return {
+        x: (touchA.clientX + touchB.clientX) / 2,
+        y: (touchA.clientY + touchB.clientY) / 2
       };
-
-      testImage.onerror = () => {
-        loading = false;
-        document.body.classList.remove("is-loading");
-        alert(`Could not load ${src}`);
-      };
-
-      testImage.src = src;
     }
 
-    function next() {
-      show(currentIndex + 1);
+    function stopButtonTouch(event) {
+      event.stopPropagation();
     }
 
-    function previous() {
-      show(currentIndex - 1);
-    }
+    prevButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      previousImage();
+    });
 
-    prevBtn.addEventListener("click", previous);
-    nextBtn.addEventListener("click", next);
+    nextButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      nextImage();
+    });
 
-    // Single-finger swipe only. Multi-touch is ignored so native pinch-zoom can work.
+    [prevButton, nextButton].forEach((button) => {
+      button.addEventListener("touchstart", stopButtonTouch, { passive: true });
+      button.addEventListener("touchmove", stopButtonTouch, { passive: true });
+      button.addEventListener("touchend", stopButtonTouch, { passive: true });
+    });
+
     viewer.addEventListener("touchstart", (event) => {
-      multiTouch = event.touches.length > 1;
-      if (multiTouch) return;
+      suppressClickUntil = Date.now() + 450;
 
-      const touch = event.changedTouches[0];
-      touchStartX = touch.clientX;
-      touchStartY = touch.clientY;
-      touchStartTime = Date.now();
-    }, { passive: true });
+      if (event.touches.length === 2) {
+        isPinching = true;
+        pinchStartDistance = distance(event.touches[0], event.touches[1]);
+        pinchStartScale = scale;
 
-    viewer.addEventListener("touchend", (event) => {
-      if (multiTouch) {
-        multiTouch = false;
+        const mid = midpoint(event.touches[0], event.touches[1]);
+        pinchStartMidX = mid.x;
+        pinchStartMidY = mid.y;
+        pinchStartTranslateX = translateX;
+        pinchStartTranslateY = translateY;
+
+        event.preventDefault();
         return;
       }
 
-      const touch = event.changedTouches[0];
-      const diffX = touch.clientX - touchStartX;
-      const diffY = touch.clientY - touchStartY;
-      const elapsed = Date.now() - touchStartTime;
-
-      const horizontalSwipe = Math.abs(diffX) > 50 && Math.abs(diffX) > Math.abs(diffY) * 1.25;
-      const quickTap = Math.abs(diffX) < 12 && Math.abs(diffY) < 12 && elapsed < 350;
-
-      if (horizontalSwipe) {
-        diffX < 0 ? next() : previous();
-      } else if (quickTap) {
-        next();
+      if (event.touches.length === 1) {
+        isPinching = false;
+        moved = false;
+        startX = event.touches[0].clientX;
+        startY = event.touches[0].clientY;
+        lastX = startX;
+        lastY = startY;
       }
-    }, { passive: true });
+    }, { passive: false });
 
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "ArrowRight" || event.key === " ") next();
-      if (event.key === "ArrowLeft") previous();
+    viewer.addEventListener("touchmove", (event) => {
+      if (event.touches.length === 2) {
+        const newDistance = distance(event.touches[0], event.touches[1]);
+        const newScale = clamp(pinchStartScale * (newDistance / pinchStartDistance), 1, 4);
+        const mid = midpoint(event.touches[0], event.touches[1]);
+
+        scale = newScale;
+        translateX = pinchStartTranslateX + (mid.x - pinchStartMidX);
+        translateY = pinchStartTranslateY + (mid.y - pinchStartMidY);
+
+        applyTransform();
+        moved = true;
+        event.preventDefault();
+        return;
+      }
+
+      if (event.touches.length === 1) {
+        const x = event.touches[0].clientX;
+        const y = event.touches[0].clientY;
+        const dx = x - lastX;
+        const dy = y - lastY;
+
+        if (Math.abs(x - startX) > 6 || Math.abs(y - startY) > 6) {
+          moved = true;
+        }
+
+        if (scale > 1) {
+          translateX += dx;
+          translateY += dy;
+          applyTransform();
+          event.preventDefault();
+        }
+
+        lastX = x;
+        lastY = y;
+      }
+    }, { passive: false });
+
+    viewer.addEventListener("touchend", (event) => {
+      if (event.touches.length > 0) return;
+
+      if (isPinching) {
+        isPinching = false;
+        if (scale <= 1.03) resetZoom();
+        event.preventDefault();
+        return;
+      }
+
+      const diffX = lastX - startX;
+      const diffY = lastY - startY;
+      const isHorizontalSwipe = Math.abs(diffX) > 45 && Math.abs(diffX) > Math.abs(diffY);
+
+      if (scale > 1) {
+        event.preventDefault();
+        return;
+      }
+
+      if (isHorizontalSwipe) {
+        // Standard mobile gallery behaviour: swipe left = next, swipe right = previous.
+        if (diffX < 0) nextImage();
+        else previousImage();
+        event.preventDefault();
+        return;
+      }
+
+      if (!moved) {
+        nextImage();
+        event.preventDefault();
+      }
+    }, { passive: false });
+
+    viewer.addEventListener("touchcancel", () => {
+      isPinching = false;
+      moved = false;
     });
 
-    slide.addEventListener("load", () => updateUi(currentIndex), { once: true });
+    viewer.addEventListener("click", () => {
+      if (Date.now() < suppressClickUntil) return;
+      if (scale === 1) nextImage();
+    });
+
+    slide.addEventListener("dblclick", () => {
+      resetZoom();
+    });
+
+    slide.addEventListener("error", () => {
+      showMessage(`Missing or failed image: ${imageFiles[currentIndex]}`);
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowRight" || event.key === " ") nextImage();
+      if (event.key === "ArrowLeft") previousImage();
+      if (event.key === "Escape") resetZoom();
+    });
   </script>
 </body>
 </html>
