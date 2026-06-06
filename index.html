@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>Mobile JPG Gallery</title>
+  <title>Mobile JPG Gallery - Clean</title>
 
   <style>
     * {
@@ -54,38 +54,6 @@
       will-change: transform;
     }
 
-    .nav-button {
-      position: fixed;
-      top: 50%;
-      transform: translateY(-50%);
-      width: 48px;
-      height: 72px;
-      border: 0;
-      border-radius: 999px;
-      background: rgba(0, 0, 0, 0.32);
-      color: #fff;
-      font-size: 34px;
-      line-height: 1;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 10;
-      cursor: pointer;
-      backdrop-filter: blur(4px);
-    }
-
-    .nav-button:active {
-      background: rgba(255, 255, 255, 0.22);
-    }
-
-    .nav-button.prev {
-      left: max(10px, env(safe-area-inset-left));
-    }
-
-    .nav-button.next {
-      right: max(10px, env(safe-area-inset-right));
-    }
-
     .message {
       position: fixed;
       left: 50%;
@@ -117,8 +85,6 @@
     <img class="slide" id="slide" src="1.jpg" alt="Image 1" draggable="false" />
   </main>
 
-  <button class="nav-button prev" id="prevButton" type="button" aria-label="Previous image">‹</button>
-  <button class="nav-button next" id="nextButton" type="button" aria-label="Next image">›</button>
   <div class="message" id="message" aria-live="polite"></div>
 
   <script>
@@ -127,8 +93,6 @@
 
     const viewer = document.getElementById("viewer");
     const slide = document.getElementById("slide");
-    const prevButton = document.getElementById("prevButton");
-    const nextButton = document.getElementById("nextButton");
     const message = document.getElementById("message");
 
     let currentIndex = 0;
@@ -217,25 +181,6 @@
       };
     }
 
-    function stopButtonTouch(event) {
-      event.stopPropagation();
-    }
-
-    prevButton.addEventListener("click", (event) => {
-      event.stopPropagation();
-      previousImage();
-    });
-
-    nextButton.addEventListener("click", (event) => {
-      event.stopPropagation();
-      nextImage();
-    });
-
-    [prevButton, nextButton].forEach((button) => {
-      button.addEventListener("touchstart", stopButtonTouch, { passive: true });
-      button.addEventListener("touchmove", stopButtonTouch, { passive: true });
-      button.addEventListener("touchend", stopButtonTouch, { passive: true });
-    });
 
     viewer.addEventListener("touchstart", (event) => {
       suppressClickUntil = Date.now() + 450;
