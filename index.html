@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Mobile Image Flip Gallery</title>
 
+  <!-- Load only the first image immediately. The script preloads nearby slides after startup. -->
+  <link rel="preload" as="image" href="1.png" fetchpriority="high" />
+
   <style>
     * {
       box-sizing: border-box;
@@ -19,7 +22,7 @@
       overflow: hidden;
       background: #000;
       user-select: none;
-      touch-action: none;
+      overscroll-behavior: none;
     }
 
     body {
@@ -33,7 +36,15 @@
       height: 100dvh;
       overflow: hidden;
       background: #000;
-      perspective: 1400px;
+      perspective: 1000px;
+
+      /*
+        Important for mobile:
+        - pan-y keeps vertical browser behaviour available if needed.
+        - horizontal movement remains available for our swipe gesture.
+        If your page is full-screen only, you can change this to touch-action: none.
+      */
+      touch-action: pan-y;
     }
 
     .slide {
@@ -49,10 +60,11 @@
       -webkit-user-drag: none;
       user-select: none;
       will-change: transform, opacity;
+      contain: paint;
     }
 
     .slide.current {
-      transform: translateX(0) rotateY(0deg) scale(1);
+      transform: translate3d(0, 0, 0) rotateY(0deg) scale(1);
       opacity: 1;
       z-index: 1;
     }
@@ -62,61 +74,61 @@
     }
 
     .slide.out-next {
-      animation: outNext 520ms cubic-bezier(.22,.9,.28,1) both;
+      animation: outNext 360ms cubic-bezier(.22,.9,.28,1) both;
     }
 
     .slide.in-next {
-      animation: inNext 520ms cubic-bezier(.22,.9,.28,1) both;
+      animation: inNext 360ms cubic-bezier(.22,.9,.28,1) both;
     }
 
     .slide.out-prev {
-      animation: outPrev 520ms cubic-bezier(.22,.9,.28,1) both;
+      animation: outPrev 360ms cubic-bezier(.22,.9,.28,1) both;
     }
 
     .slide.in-prev {
-      animation: inPrev 520ms cubic-bezier(.22,.9,.28,1) both;
+      animation: inPrev 360ms cubic-bezier(.22,.9,.28,1) both;
     }
 
     @keyframes outNext {
       from {
-        transform: translateX(0) rotateY(0deg) scale(1);
+        transform: translate3d(0, 0, 0) rotateY(0deg) scale(1);
         opacity: 1;
       }
       to {
-        transform: translateX(-18%) rotateY(-18deg) scale(.985);
+        transform: translate3d(-14%, 0, 0) rotateY(-10deg) scale(.99);
         opacity: 0;
       }
     }
 
     @keyframes inNext {
       from {
-        transform: translateX(18%) rotateY(18deg) scale(.985);
+        transform: translate3d(14%, 0, 0) rotateY(10deg) scale(.99);
         opacity: 0;
       }
       to {
-        transform: translateX(0) rotateY(0deg) scale(1);
+        transform: translate3d(0, 0, 0) rotateY(0deg) scale(1);
         opacity: 1;
       }
     }
 
     @keyframes outPrev {
       from {
-        transform: translateX(0) rotateY(0deg) scale(1);
+        transform: translate3d(0, 0, 0) rotateY(0deg) scale(1);
         opacity: 1;
       }
       to {
-        transform: translateX(18%) rotateY(18deg) scale(.985);
+        transform: translate3d(14%, 0, 0) rotateY(10deg) scale(.99);
         opacity: 0;
       }
     }
 
     @keyframes inPrev {
       from {
-        transform: translateX(-18%) rotateY(-18deg) scale(.985);
+        transform: translate3d(-14%, 0, 0) rotateY(-10deg) scale(.99);
         opacity: 0;
       }
       to {
-        transform: translateX(0) rotateY(0deg) scale(1);
+        transform: translate3d(0, 0, 0) rotateY(0deg) scale(1);
         opacity: 1;
       }
     }
@@ -134,7 +146,15 @@
 
 <body>
   <main class="viewer" id="viewer" aria-label="Tap or swipe to flip through images">
-    <img class="slide current" id="currentSlide" src="1.png" alt="Image 1" draggable="false" />
+    <img
+      class="slide current"
+      id="currentSlide"
+      src="1.png"
+      alt="Image 1"
+      draggable="false"
+      decoding="async"
+      fetchpriority="high"
+    />
   </main>
 
   <script>
@@ -145,32 +165,92 @@
     let currentSlide = document.getElementById("currentSlide");
     let isAnimating = false;
 
+    let gestureStarted = false;
     let startX = 0;
     let startY = 0;
-    let pointerDown = false;
+    let lastGestureTime = 0;
 
-    const cache = new Map();
+    /*
+      Mobile performance:
+      The old version preloaded all images immediately.
+      This version keeps only the current image and nearby images warm.
+      Increase PRELOAD_RADIUS to 2 if users move very quickly through slides.
+    */
+    const PRELOAD_RADIUS = 1;
+    const imageCache = new Map();
 
-    function preloadImages() {
-      for (let i = 1; i <= totalImages; i++) {
-        const img = new Image();
-        img.src = `${i}.png`;
-        cache.set(i, img);
-      }
+    function imagePath(index) {
+      return `${index}.png`;
+    }
+
+    function wrapIndex(index) {
+      if (index < 1) return totalImages;
+      if (index > totalImages) return 1;
+      return index;
     }
 
     function getTargetIndex(direction) {
-      if (direction === "prev") {
-        return currentIndex === 1 ? totalImages : currentIndex - 1;
-      }
-
-      return currentIndex === totalImages ? 1 : currentIndex + 1;
+      return direction === "prev"
+        ? wrapIndex(currentIndex - 1)
+        : wrapIndex(currentIndex + 1);
     }
 
-    function waitForImage(img) {
-      if (img.complete) return Promise.resolve();
+    function preloadImage(index) {
+      index = wrapIndex(index);
 
-      return new Promise((resolve) => {
+      if (imageCache.has(index)) {
+        return imageCache.get(index);
+      }
+
+      const img = new Image();
+      img.decoding = "async";
+      img.src = imagePath(index);
+      imageCache.set(index, img);
+      return img;
+    }
+
+    function preloadAround(index) {
+      // Give the visible image priority, then nearby images.
+      preloadImage(index);
+
+      window.requestIdleCallback?.(() => {
+        for (let offset = 1; offset <= PRELOAD_RADIUS; offset++) {
+          preloadImage(index + offset);
+          preloadImage(index - offset);
+        }
+
+        // Keep cache small on memory-limited phones.
+        for (const cachedIndex of imageCache.keys()) {
+          let distance = Math.abs(cachedIndex - index);
+          distance = Math.min(distance, totalImages - distance);
+
+          if (distance > PRELOAD_RADIUS + 1) {
+            imageCache.delete(cachedIndex);
+          }
+        }
+      }) || setTimeout(() => {
+        for (let offset = 1; offset <= PRELOAD_RADIUS; offset++) {
+          preloadImage(index + offset);
+          preloadImage(index - offset);
+        }
+      }, 80);
+    }
+
+    async function waitForImage(index) {
+      const img = preloadImage(index);
+
+      try {
+        if (img.decode) {
+          await img.decode();
+          return;
+        }
+      } catch (error) {
+        // If decoding fails, let the browser still attempt to display the image.
+      }
+
+      if (img.complete) return;
+
+      await new Promise((resolve) => {
         img.onload = resolve;
         img.onerror = resolve;
       });
@@ -182,13 +262,14 @@
 
       const targetIndex = getTargetIndex(direction);
 
+      await waitForImage(targetIndex);
+
       const incoming = document.createElement("img");
       incoming.className = "slide incoming";
-      incoming.src = `${targetIndex}.png`;
+      incoming.src = imagePath(targetIndex);
       incoming.alt = `Image ${targetIndex}`;
       incoming.draggable = false;
-
-      await waitForImage(incoming);
+      incoming.decoding = "async";
 
       viewer.appendChild(incoming);
 
@@ -211,45 +292,97 @@
           currentSlide = incoming;
           currentIndex = targetIndex;
           isAnimating = false;
+          preloadAround(currentIndex);
         },
         { once: true }
       );
     }
 
-    viewer.addEventListener("pointerdown", (event) => {
-      pointerDown = true;
-      startX = event.clientX;
-      startY = event.clientY;
-    });
+    function startGesture(x, y) {
+      gestureStarted = true;
+      startX = x;
+      startY = y;
+    }
 
-    viewer.addEventListener("pointerup", (event) => {
-      if (!pointerDown) return;
+    function finishGesture(x, y) {
+      if (!gestureStarted) return;
 
-      pointerDown = false;
+      gestureStarted = false;
 
-      const diffX = event.clientX - startX;
-      const diffY = event.clientY - startY;
+      // Prevent duplicate firing when both pointer and touch events are emitted.
+      const now = Date.now();
+      if (now - lastGestureTime < 250) return;
+      lastGestureTime = now;
+
+      const diffX = x - startX;
+      const diffY = y - startY;
 
       const isHorizontalSwipe =
-        Math.abs(diffX) > 45 && Math.abs(diffX) > Math.abs(diffY);
+        Math.abs(diffX) > 35 && Math.abs(diffX) > Math.abs(diffY) * 1.25;
+
+      const isTap =
+        Math.abs(diffX) < 12 && Math.abs(diffY) < 12;
 
       if (isHorizontalSwipe) {
         flip(diffX < 0 ? "next" : "prev");
-      } else {
+      } else if (isTap) {
         flip("next");
+      }
+    }
+
+    // Pointer events: modern browsers.
+    viewer.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+
+      startGesture(event.clientX, event.clientY);
+
+      if (viewer.setPointerCapture && event.pointerId !== undefined) {
+        viewer.setPointerCapture(event.pointerId);
+      }
+    });
+
+    viewer.addEventListener("pointerup", (event) => {
+      finishGesture(event.clientX, event.clientY);
+
+      if (viewer.releasePointerCapture && event.pointerId !== undefined) {
+        try {
+          viewer.releasePointerCapture(event.pointerId);
+        } catch (error) {}
       }
     });
 
     viewer.addEventListener("pointercancel", () => {
-      pointerDown = false;
+      gestureStarted = false;
     });
+
+    // Touch fallback: older iOS/Android WebViews and embedded browsers.
+    viewer.addEventListener(
+      "touchstart",
+      (event) => {
+        if (event.touches.length !== 1) return;
+        const touch = event.touches[0];
+        startGesture(touch.clientX, touch.clientY);
+      },
+      { passive: true }
+    );
+
+    viewer.addEventListener(
+      "touchend",
+      (event) => {
+        if (!event.changedTouches.length) return;
+        const touch = event.changedTouches[0];
+        finishGesture(touch.clientX, touch.clientY);
+      },
+      { passive: true }
+    );
 
     document.addEventListener("keydown", (event) => {
       if (event.key === "ArrowRight" || event.key === " ") flip("next");
       if (event.key === "ArrowLeft") flip("prev");
     });
 
-    preloadImages();
+    // Start warming only nearby images after the first screen is usable.
+    preloadAround(currentIndex);
   </script>
 </body>
 </html>
