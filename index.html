@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover" />
-  <title>Mobile Image Flip Gallery</title>
+  <title>Mobile Image Gallery</title>
 
   <style>
     * {
@@ -16,10 +16,11 @@
       margin: 0;
       width: 100%;
       height: 100%;
-      overflow: hidden;
       background: #000;
       user-select: none;
-      overscroll-behavior: none;
+      -webkit-user-select: none;
+      touch-action: pan-x pan-y pinch-zoom;
+      -ms-touch-action: pan-x pan-y pinch-zoom;
     }
 
     body {
@@ -33,12 +34,13 @@
       height: 100dvh;
       overflow: hidden;
       background: #000;
-      touch-action: none;
+      display: grid;
+      place-items: center;
+      touch-action: pan-x pan-y pinch-zoom;
+      -ms-touch-action: pan-x pan-y pinch-zoom;
     }
 
     .slide {
-      position: absolute;
-      inset: 0;
       width: 100%;
       height: 100%;
       object-fit: contain;
@@ -46,22 +48,13 @@
       background: #000;
       -webkit-user-drag: none;
       user-select: none;
-      transform-origin: center center;
-      transition: transform 220ms ease, opacity 220ms ease;
+      -webkit-user-select: none;
       opacity: 1;
+      transition: opacity 120ms ease;
     }
 
-    .slide.current {
-      z-index: 1;
-    }
-
-    .slide.incoming {
-      z-index: 2;
-      opacity: 0;
-    }
-
-    .slide.incoming.show {
-      opacity: 1;
+    .slide.loading {
+      opacity: .35;
     }
 
     .loader {
@@ -72,21 +65,22 @@
       z-index: 20;
       padding: 8px 12px;
       border-radius: 999px;
-      background: rgba(0, 0, 0, .68);
+      background: rgba(0, 0, 0, .72);
       color: #fff;
       font: 500 13px/1.2 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       pointer-events: none;
       opacity: 0;
-      transition: opacity 160ms ease;
+      transition: opacity 120ms ease;
       white-space: nowrap;
     }
 
     .loader.visible {
-      opacity: .9;
+      opacity: .95;
     }
 
     @media (prefers-reduced-motion: reduce) {
-      .slide {
+      .slide,
+      .loader {
         transition-duration: 1ms;
       }
     }
@@ -94,9 +88,9 @@
 </head>
 
 <body>
-  <main class="viewer" id="viewer" aria-label="Tap, swipe, or pinch to zoom images">
+  <main class="viewer" id="viewer" aria-label="Tap or swipe to change image. Pinch with two fingers to zoom.">
     <img
-      class="slide current"
+      class="slide"
       id="currentSlide"
       src="1.png"
       alt="Image 1"
@@ -110,14 +104,18 @@
   <script>
     const totalImages = 17;
     const viewer = document.getElementById("viewer");
+    const currentSlide = document.getElementById("currentSlide");
     const loader = document.getElementById("loader");
 
     let currentIndex = 1;
-    let currentSlide = document.getElementById("currentSlide");
-    let isAnimating = false;
-
-    const imageCache = new Map();
+    let isChanging = false;
+    let startX = 0;
+    let startY = 0;
+    let touchStarted = false;
+    let multiTouchHappened = false;
     let preloadTimer = null;
+
+    const cache = new Map();
 
     function imagePath(index) {
       return `${index}.png`;
@@ -129,281 +127,159 @@
       return index;
     }
 
-    function getTargetIndex(direction) {
+    function nextIndex(direction) {
       return direction === "prev" ? wrapIndex(currentIndex - 1) : wrapIndex(currentIndex + 1);
+    }
+
+    function pageIsZoomed() {
+      return window.visualViewport && window.visualViewport.scale > 1.05;
     }
 
     function showLoader() {
       loader.classList.add("visible");
+      currentSlide.classList.add("loading");
     }
 
     function hideLoader() {
       loader.classList.remove("visible");
+      currentSlide.classList.remove("loading");
     }
 
-    function preloadImage(index) {
+    function preload(index) {
       index = wrapIndex(index);
-      if (imageCache.has(index)) return imageCache.get(index);
+      if (cache.has(index)) return cache.get(index);
 
       const img = new Image();
       img.decoding = "async";
       img.src = imagePath(index);
-      imageCache.set(index, img);
+      cache.set(index, img);
       return img;
     }
 
-    function preloadNearbyLater(index) {
-      clearTimeout(preloadTimer);
-      preloadTimer = setTimeout(() => {
-        // Only preload ONE likely next image first. This prevents slow mobile startup.
-        preloadImage(wrapIndex(index + 1));
-
-        // Then, much later, warm the previous image if the browser is idle.
-        const warmPrevious = () => preloadImage(wrapIndex(index - 1));
-        if ("requestIdleCallback" in window) {
-          requestIdleCallback(warmPrevious, { timeout: 2500 });
-        } else {
-          setTimeout(warmPrevious, 1800);
-        }
-
-        // Keep memory low on older phones.
-        for (const cachedIndex of imageCache.keys()) {
-          let distance = Math.abs(cachedIndex - index);
-          distance = Math.min(distance, totalImages - distance);
-          if (distance > 2) imageCache.delete(cachedIndex);
-        }
-      }, 900);
-    }
-
-    function waitForImageElement(img) {
+    function waitFor(img) {
       if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+
       return new Promise((resolve) => {
         img.onload = resolve;
         img.onerror = resolve;
       });
     }
 
-    async function loadSlideElement(index) {
-      const incoming = document.createElement("img");
-      incoming.className = "slide incoming";
-      incoming.src = imagePath(index);
-      incoming.alt = `Image ${index}`;
-      incoming.draggable = false;
-      incoming.decoding = "async";
-      incoming.loading = "eager";
-      return incoming;
+    function preloadNextOnly() {
+      clearTimeout(preloadTimer);
+      preloadTimer = setTimeout(() => {
+        preload(wrapIndex(currentIndex + 1));
+
+        // Keep memory low on older mobile phones.
+        for (const index of cache.keys()) {
+          const distance = Math.min(
+            Math.abs(index - currentIndex),
+            totalImages - Math.abs(index - currentIndex)
+          );
+          if (distance > 1) cache.delete(index);
+        }
+      }, 1200);
     }
 
-    // Zoom state
-    const MIN_SCALE = 1;
-    const MAX_SCALE = 4;
-    let scale = 1;
-    let translateX = 0;
-    let translateY = 0;
+    async function changeSlide(direction = "next") {
+      if (isChanging || pageIsZoomed()) return;
+      isChanging = true;
 
-    let startX = 0;
-    let startY = 0;
-    let gestureStarted = false;
-    let lastTapTime = 0;
+      const target = nextIndex(direction);
+      const img = preload(target);
 
-    let isPanning = false;
-    let panStartX = 0;
-    let panStartY = 0;
-    let panBaseX = 0;
-    let panBaseY = 0;
-
-    let isPinching = false;
-    let pinchStartDistance = 0;
-    let pinchStartScale = 1;
-
-    function clamp(value, min, max) {
-      return Math.max(min, Math.min(max, value));
-    }
-
-    function getDistance(a, b) {
-      return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-    }
-
-    function clampPan() {
-      if (scale <= 1) {
-        translateX = 0;
-        translateY = 0;
-        return;
-      }
-      const maxX = ((scale - 1) * viewer.clientWidth) / 2;
-      const maxY = ((scale - 1) * viewer.clientHeight) / 2;
-      translateX = clamp(translateX, -maxX, maxX);
-      translateY = clamp(translateY, -maxY, maxY);
-    }
-
-    function applyZoom() {
-      clampPan();
-      currentSlide.style.transform = `translate3d(${translateX}px, ${translateY}px, 0) scale(${scale})`;
-    }
-
-    function resetZoom() {
-      scale = 1;
-      translateX = 0;
-      translateY = 0;
-      if (currentSlide) currentSlide.style.transform = "";
-    }
-
-    async function flip(direction = "next") {
-      if (isAnimating) return;
-      isAnimating = true;
-      resetZoom();
-
-      const targetIndex = getTargetIndex(direction);
-      const incoming = await loadSlideElement(targetIndex);
-      viewer.insertBefore(incoming, loader);
-
-      if (!incoming.complete) showLoader();
-      await waitForImageElement(incoming);
+      if (!(img.complete && img.naturalWidth > 0)) showLoader();
+      await waitFor(img);
       hideLoader();
 
-      requestAnimationFrame(() => {
-        const shift = direction === "prev" ? 30 : -30;
-        currentSlide.style.transform = `translate3d(${shift}px, 0, 0)`;
-        currentSlide.style.opacity = "0";
-        incoming.classList.add("show");
-      });
+      currentIndex = target;
+      currentSlide.src = imagePath(currentIndex);
+      currentSlide.alt = `Image ${currentIndex}`;
 
-      setTimeout(() => {
-        currentSlide.remove();
-        incoming.className = "slide current";
-        incoming.id = "currentSlide";
-        incoming.style.transform = "";
-        incoming.style.opacity = "1";
-
-        currentSlide = incoming;
-        currentIndex = targetIndex;
-        isAnimating = false;
-        preloadNearbyLater(currentIndex);
-      }, 240);
+      isChanging = false;
+      preloadNextOnly();
     }
 
-    function startNavigation(x, y) {
-      if (scale > 1 || isPinching) return;
-      gestureStarted = true;
-      startX = x;
-      startY = y;
-    }
-
-    function finishNavigation(x, y) {
-      if (!gestureStarted || scale > 1 || isPinching) return;
-      gestureStarted = false;
-
-      const diffX = x - startX;
-      const diffY = y - startY;
-      const horizontalSwipe = Math.abs(diffX) > 35 && Math.abs(diffX) > Math.abs(diffY) * 1.25;
-      const tap = Math.abs(diffX) < 12 && Math.abs(diffY) < 12;
-
-      if (horizontalSwipe) flip(diffX < 0 ? "next" : "prev");
-      else if (tap) flip("next");
-    }
-
-    viewer.addEventListener("touchstart", (event) => {
-      if (event.touches.length === 2) {
-        event.preventDefault();
-        gestureStarted = false;
-        isPinching = true;
-        pinchStartDistance = getDistance(event.touches[0], event.touches[1]);
-        pinchStartScale = scale;
+    function finishGesture(endX, endY) {
+      if (!touchStarted || multiTouchHappened || pageIsZoomed()) {
+        touchStarted = false;
+        multiTouchHappened = false;
         return;
       }
 
-      if (event.touches.length === 1) {
-        const t = event.touches[0];
-        if (scale > 1) {
-          event.preventDefault();
-          isPanning = true;
-          panStartX = t.clientX;
-          panStartY = t.clientY;
-          panBaseX = translateX;
-          panBaseY = translateY;
-        } else {
-          startNavigation(t.clientX, t.clientY);
-        }
+      const diffX = endX - startX;
+      const diffY = endY - startY;
+      const horizontalSwipe = Math.abs(diffX) > 40 && Math.abs(diffX) > Math.abs(diffY) * 1.25;
+      const tap = Math.abs(diffX) < 14 && Math.abs(diffY) < 14;
+
+      touchStarted = false;
+
+      if (horizontalSwipe) {
+        changeSlide(diffX < 0 ? "next" : "prev");
+      } else if (tap) {
+        changeSlide("next");
       }
-    }, { passive: false });
+    }
+
+    // Touch events are passive and never call preventDefault().
+    // This keeps native mobile pinch-zoom fast.
+    viewer.addEventListener("touchstart", (event) => {
+      if (event.touches.length > 1) {
+        multiTouchHappened = true;
+        touchStarted = false;
+        return;
+      }
+
+      const t = event.touches[0];
+      startX = t.clientX;
+      startY = t.clientY;
+      touchStarted = true;
+      multiTouchHappened = false;
+    }, { passive: true });
 
     viewer.addEventListener("touchmove", (event) => {
-      if (event.touches.length === 2 && isPinching) {
-        event.preventDefault();
-        const distance = getDistance(event.touches[0], event.touches[1]);
-        scale = clamp((distance / pinchStartDistance) * pinchStartScale, MIN_SCALE, MAX_SCALE);
-        applyZoom();
-        return;
+      if (event.touches.length > 1) {
+        multiTouchHappened = true;
+        touchStarted = false;
       }
-
-      if (event.touches.length === 1 && isPanning && scale > 1) {
-        event.preventDefault();
-        const t = event.touches[0];
-        translateX = panBaseX + t.clientX - panStartX;
-        translateY = panBaseY + t.clientY - panStartY;
-        applyZoom();
-      }
-    }, { passive: false });
+    }, { passive: true });
 
     viewer.addEventListener("touchend", (event) => {
-      if (isPinching && event.touches.length < 2) {
-        event.preventDefault();
-        isPinching = false;
-        if (scale <= 1.03) resetZoom();
-        else applyZoom();
-        return;
-      }
-
-      if (isPanning) {
-        event.preventDefault();
-        isPanning = false;
-        return;
-      }
-
       if (!event.changedTouches.length) return;
       const t = event.changedTouches[0];
-      const now = Date.now();
-      const doubleTap = now - lastTapTime < 300;
-      lastTapTime = now;
-
-      if (doubleTap) {
-        event.preventDefault();
-        resetZoom();
-        gestureStarted = false;
-        return;
-      }
-
-      finishNavigation(t.clientX, t.clientY);
-    }, { passive: false });
+      finishGesture(t.clientX, t.clientY);
+    }, { passive: true });
 
     viewer.addEventListener("touchcancel", () => {
-      gestureStarted = false;
-      isPanning = false;
-      isPinching = false;
-    });
+      touchStarted = false;
+      multiTouchHappened = false;
+    }, { passive: true });
 
+    // Mouse / trackpad support for desktop testing.
     viewer.addEventListener("pointerdown", (event) => {
       if (event.pointerType === "touch") return;
       if (event.pointerType === "mouse" && event.button !== 0) return;
-      startNavigation(event.clientX, event.clientY);
+      startX = event.clientX;
+      startY = event.clientY;
+      touchStarted = true;
+      multiTouchHappened = false;
     });
 
     viewer.addEventListener("pointerup", (event) => {
       if (event.pointerType === "touch") return;
-      finishNavigation(event.clientX, event.clientY);
+      finishGesture(event.clientX, event.clientY);
     });
 
     document.addEventListener("keydown", (event) => {
-      if (event.key === "ArrowRight" || event.key === " ") flip("next");
-      if (event.key === "ArrowLeft") flip("prev");
-      if (event.key === "Escape") resetZoom();
+      if (event.key === "ArrowRight" || event.key === " ") changeSlide("next");
+      if (event.key === "ArrowLeft") changeSlide("prev");
     });
 
-    // Important: do not preload anything until the first image is already visible.
+    // Do not preload until the first image has finished displaying.
     if (currentSlide.complete && currentSlide.naturalWidth > 0) {
-      preloadNearbyLater(currentIndex);
+      preloadNextOnly();
     } else {
-      currentSlide.addEventListener("load", () => preloadNearbyLater(currentIndex), { once: true });
+      currentSlide.addEventListener("load", preloadNextOnly, { once: true });
     }
   </script>
 </body>
