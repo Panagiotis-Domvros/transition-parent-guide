@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover" />
-  <title>Ultra Fast Mobile Image Gallery</title>
+  <title>Clean Ultra Fast Mobile Image Gallery</title>
 
   <style>
     * {
@@ -77,30 +77,6 @@
     .prev { left: 10px; }
     .next { right: 10px; }
 
-    .counter {
-      position: fixed;
-      left: 50%;
-      bottom: calc(10px + env(safe-area-inset-bottom));
-      transform: translateX(-50%);
-      z-index: 6;
-      padding: 6px 10px;
-      border-radius: 999px;
-      background: rgba(0, 0, 0, .55);
-      font-size: 13px;
-    }
-
-    .open-link {
-      position: fixed;
-      right: 10px;
-      bottom: calc(10px + env(safe-area-inset-bottom));
-      z-index: 6;
-      padding: 7px 10px;
-      border-radius: 999px;
-      background: rgba(0, 0, 0, .55);
-      color: #fff;
-      text-decoration: none;
-      font-size: 13px;
-    }
 
     .loading {
       position: fixed;
@@ -126,8 +102,6 @@
         font-size: 24px;
       }
 
-      .counter,
-      .open-link,
       .loading {
         font-size: 12px;
       }
@@ -142,9 +116,7 @@
 
   <button class="nav prev" id="prevBtn" type="button" aria-label="Previous image">‹</button>
   <button class="nav next" id="nextBtn" type="button" aria-label="Next image">›</button>
-  <div class="counter" id="counter">1 / 17</div>
   <div class="loading" id="loading">Loading…</div>
-  <a class="open-link" id="openLink" href="1.png" target="_blank" rel="noopener">Open image</a>
 
   <script>
     /*
@@ -161,8 +133,6 @@
     const totalImages = 17;
     const viewer = document.getElementById("viewer");
     const slide = document.getElementById("slide");
-    const counter = document.getElementById("counter");
-    const openLink = document.getElementById("openLink");
     const prevBtn = document.getElementById("prevBtn");
     const nextBtn = document.getElementById("nextBtn");
 
@@ -184,8 +154,6 @@
     }
 
     function updateUi(index) {
-      counter.textContent = `${index} / ${totalImages}`;
-      openLink.href = imagePath(index);
       slide.alt = `Image ${index}`;
     }
 
